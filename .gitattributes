@@ -1,0 +1,8 @@
+# User-generated content stays private: exclude it from `git archive` and any
+# archive-based open-source mirror export. It is still committed & pushed to the
+# private repo.
+data/ export-ignore
+data/** export-ignore
+
+# Normalize line endings for text sources.
+* text=auto eol=lf

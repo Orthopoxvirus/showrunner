@@ -1,0 +1,93 @@
+name: Release standalone bundle
+
+# Runs on the PUBLIC GitHub repo when a release tag lands (pushed there by the
+# private mirror pipeline). Builds the single-file standalone bundle and
+# attaches it to a GitHub Release, with notes taken from the matching
+# CHANGELOG.md section.
+#
+# The zip ships an EMPTY data/ skeleton: user content is private and never
+# part of the public repo. Point the app at the bundled data/ folder (or any
+# empty folder) on first launch and author your own content.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Stage bundle
+        run: |
+          set -euo pipefail
+          STAGE=stage/showrunner
+          mkdir -p "$STAGE"
+          cp -r dist/. "$STAGE/"
+          mkdir -p "$STAGE/data/events" "$STAGE/data/games"
+          cat > "$STAGE/README.txt" <<'EOF'
+          Showrunner — standalone bundle
+          ==============================
+
+          DE: index.html in Chrome oder Edge öffnen (Doppelklick genügt), dann
+              einmal den data-Ordner wählen — der mitgelieferte (leere) data-
+              Ordner ist ein guter Start. Er füllt sich mit deinen Anlässen,
+              Backlogs und Medien. Danach läuft alles lokal im Browser.
+
+          EN: Open index.html in Chrome or Edge (double-click is fine), then
+              pick the data folder once — the bundled (empty) data folder is a
+              good start. It fills up with your events, backlogs and media.
+              Everything runs locally in the browser from there.
+
+          Firefox/Safari: not supported in standalone mode — run from source
+          via `npm run dev` instead.
+          EOF
+          cat > "$STAGE/data/README.txt" <<'EOF'
+          This is your Showrunner data folder. Pick it in the app on first
+          launch; events, backlogs and media will be stored here as plain
+          JSON + media files. Back it up (or git-commit it) as you like.
+          EOF
+          ZIP="showrunner-${GITHUB_REF_NAME}-standalone.zip"
+          (cd stage && zip -qr "../$ZIP" showrunner)
+          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+
+      - name: Extract changelog section
+        run: |
+          set -euo pipefail
+          awk -v tag="${GITHUB_REF_NAME}" '
+            /^## /{ if (found) exit; if (index($0, "## " tag) == 1) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "No CHANGELOG section for ${GITHUB_REF_NAME} — using generic notes."
+            printf 'Standalone bundle: unzip, open index.html in Chrome/Edge, pick the data folder once.\n' > notes.md
+          fi
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "$ZIP" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" "$ZIP" \
+              --title "Showrunner ${GITHUB_REF_NAME}" \
+              --notes-file notes.md
+          fi
